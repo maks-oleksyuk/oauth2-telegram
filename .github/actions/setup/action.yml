@@ -1,0 +1,46 @@
+name: '⚙️ Setup environment'
+description: 'Installs Task, PHP and composer dependencies.'
+
+inputs:
+  php:
+    description: 'PHP version to install'
+    required: true
+    default: '8.4'
+  coverage:
+    description: 'Coverage driver for shivammathur/setup-php (none, xdebug, pcov)'
+    required: false
+    default: 'none'
+  prefer-lowest:
+    description: 'Install the lowest allowed dependency versions'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: '📋 Install Task'
+      uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+    - name: '🐘 Setup PHP ${{ inputs.php }}'
+      uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+      with:
+        php-version: ${{ inputs.php }}
+        coverage: ${{ inputs.coverage }}
+        tools: cs2pr
+
+    - name: '💽 Cache composer dependencies'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.composer/cache
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+        restore-keys: ${{ runner.os }}-composer-
+
+    - name: '📦 Install composer dependencies'
+      if: inputs.prefer-lowest != 'true'
+      shell: bash
+      run: composer install --no-interaction --no-progress --no-scripts --ansi;
+
+    - name: '📦 Install lowest allowed composer dependencies'
+      if: inputs.prefer-lowest == 'true'
+      shell: bash
+      run: composer update --prefer-lowest --prefer-stable --no-interaction --no-progress --no-scripts --ansi;

@@ -1,0 +1,105 @@
+name: '🔄 CI'
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    name: '🧹 Clean up GitHub repo'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # required by Mattraks/delete-workflow-runs to delete old workflow runs
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: '🗑 Delete workflow runs'
+        uses: Mattraks/delete-workflow-runs@b3018382ca039b53d238908238bd35d1fb14f8ee # v2.1.0
+        with:
+          retain_days: 7
+          keep_minimum_runs: 1
+          delete_workflow_pattern: ci.yml
+
+  lint:
+    name: '🪄 Lint | ${{ matrix.command.name }}'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        command:
+          - { name: '📦 Composer', command: 'lint:composer' }
+          - { name: '🔍 PHPStan', command: 'lint:phpstan -- --no-progress' }
+          - { name: '🪶 PHP CS Fixer', command: "lint:php-cs-fixer -- --format=checkstyle | sed -n '/^<?xml/,$p' | cs2pr" }
+          - { name: '🏠 Rector', command: 'lint:rector -- --no-progress-bar' }
+
+    steps:
+      - name: '🛎 Checkout'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: '⚙️ Prepare environment'
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] -- conflicts with .gitattributes export-ignore
+
+      - name: '${{ matrix.command.name }} validate'
+        run: eval "task ${COMMAND}"
+        env:
+          COMMAND: ${{ matrix.command.command }}
+
+  test:
+    name: "♻️ Test | PHP ${{ matrix.php }} ${{ matrix.deps == 'highest' && '↑' || '↓' }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+        deps: [highest, lowest]
+        include:
+          - { php: '8.5', deps: highest, coverage: true }
+
+    steps:
+      - name: '🛎 Checkout'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: '⚙️ Prepare environment'
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] -- conflicts with .gitattributes export-ignore
+        with:
+          php: ${{ matrix.php }}
+          prefer-lowest: ${{ matrix.deps == 'lowest' }}
+          coverage: ${{ matrix.coverage && 'xdebug' || 'none' }}
+
+      - name: '🔬 Run tests'
+        run: task ${{ matrix.coverage && 'test:coverage' || 'test' }} -- --no-progress
+
+      - name: '☂️ Upload coverage to Codecov'
+        if: matrix.coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: maks-oleksyuk/oauth2-telegram
+          directory: ./build/report
+
+      - name: '☂️ Upload test results to Codecov'
+        if: matrix.coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: maks-oleksyuk/oauth2-telegram
+          directory: ./build/report
+          report_type: test_results

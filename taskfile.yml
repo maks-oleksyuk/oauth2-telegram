@@ -1,0 +1,146 @@
+version: 3
+
+env:
+  PHP_BIN: '{{.PHP_BIN | default "$(which php)"}}'
+  COMPOSER_BIN: '{{.COMPOSER_BIN | default "$(which composer)"}}'
+
+vars:
+  COMPOSER_BIN_DIR: '{{.TASKFILE_DIR}}/vendor/bin'
+
+tasks:
+  default:
+    desc: 'List all commands.'
+    cmd: 'task -l'
+
+  # Utils:
+
+  composer:
+    desc: 'Runs `composer` command.'
+    cmd: '{{.PHP_BIN}} {{.COMPOSER_BIN}} {{.CLI_ARGS}} --ansi'
+    internal: true
+    silent: true
+
+  phpunit:
+    desc: 'Runs `phpunit` command.'
+    aliases:
+      - unit
+    cmd: '{{.PHP_BIN}} {{.COMPOSER_BIN_DIR}}/phpunit {{.CLI_ARGS}} --colors=always'
+    silent: true
+
+  php-cs-fixer:
+    desc: 'Runs `php-cs-fixer` command.'
+    aliases:
+      - csf
+      - cs-fixer
+    cmd: '{{.PHP_BIN}} {{.COMPOSER_BIN_DIR}}/php-cs-fixer fix -v {{.CLI_ARGS}} --ansi'
+    silent: true
+
+  phpstan:
+    desc: 'Runs `phpstan` command.'
+    aliases:
+      - s
+      - stan
+    cmd: '{{.PHP_BIN}} {{.COMPOSER_BIN_DIR}}/phpstan {{.CLI_ARGS}} --ansi'
+    silent: true
+
+  rector:
+    desc: 'Runs `rector` command.'
+    aliases:
+      - r
+    cmd: '{{.PHP_BIN}} {{.COMPOSER_BIN_DIR}}/rector {{.CLI_ARGS}} --ansi'
+    silent: true
+
+  # Linters:
+
+  lint:
+    desc: 'Run all linters.'
+    aliases:
+      - l
+    cmds:
+      - defer: { task: lint:rector }
+      - defer: { task: lint:phpstan }
+      - defer: { task: lint:php-cs-fixer }
+      - defer: { task: lint:composer }
+
+  lint:composer:
+    desc: 'Validates composer.json.'
+    aliases:
+      - l:co
+    cmds:
+      - task: composer
+        vars: { CLI_ARGS: 'validate --no-check-version --no-check-publish --strict' }
+
+  lint:php-cs-fixer:
+    desc: 'Lint PHP files.'
+    aliases:
+      - l:p
+      - l:php
+      - l:csf
+    cmds:
+      - task: php-cs-fixer
+        vars: { CLI_ARGS: '--dry-run --diff {{.CLI_ARGS}}' }
+
+  lint:phpstan:
+    desc: 'Analyze PHP code for bugs and errors.'
+    aliases:
+      - l:s
+      - l:stan
+    cmds:
+      - task: phpstan
+        vars: { CLI_ARGS: 'analyze {{.CLI_ARGS}}' }
+
+  lint:rector:
+    desc: 'Check for Rector refactoring suggestions.'
+    aliases:
+      - l:r
+    cmds:
+      - task: rector
+        vars: { CLI_ARGS: '--dry-run {{.CLI_ARGS}}' }
+
+  # Fixing:
+
+  fix:
+    desc: 'Try automated fixes for found problems.'
+    aliases:
+      - f
+    cmds:
+      - defer: { task: fix:rector }
+      - defer: { task: fix:php-cs-fixer }
+
+  fix:php-cs-fixer:
+    desc: 'Fix PHP CS Fixer issues.'
+    aliases:
+      - f:p
+      - f:php
+      - f:csf
+    cmds:
+      - task: php-cs-fixer
+
+  fix:rector:
+    desc: 'Fix Rector issues.'
+    aliases:
+      - f:r
+    cmds:
+      - task: rector
+
+  # Testing:
+
+  test:
+    desc: 'Run tests.'
+    aliases:
+      - t
+    cmds:
+      - task: phpunit
+        vars: { CLI_ARGS: '{{.CLI_ARGS}}' }
+
+  test:coverage:
+    desc: 'Run tests with code coverage (needs Xdebug or PCOV); reports land in build/.'
+    aliases:
+      - t:c
+      - t:coverage
+    env:
+      XDEBUG_MODE: coverage
+    cmds:
+      - task: phpunit
+        vars:
+          CLI_ARGS: '--coverage-html build/coverage --coverage-clover build/report/coverage.xml --log-junit build/report/junit.xml {{.CLI_ARGS}}'

@@ -1,0 +1,66 @@
+{
+    "name": "oleksyuk/oauth2-telegram",
+    "description": "Telegram OpenID Connect (Log in with Telegram) provider for league/oauth2-client",
+    "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "oauth2",
+        "oauth",
+        "openid-connect",
+        "oidc",
+        "telegram",
+        "authorization",
+        "authentication",
+        "login",
+        "league",
+        "oauth2-client"
+    ],
+    "authors": [
+        {
+            "name": "Maks Oleksyuk",
+            "email": "maksym.oleksyuk@gmail.com",
+            "role": "Maintainer"
+        }
+    ],
+    "homepage": "https://github.com/maks-oleksyuk/oauth2-telegram",
+    "support": {
+        "issues": "https://github.com/maks-oleksyuk/oauth2-telegram/issues",
+        "source": "https://github.com/maks-oleksyuk/oauth2-telegram"
+    },
+    "require": {
+        "php": "^8.4",
+        "ext-openssl": "*",
+        "firebase/php-jwt": "^7.2",
+        "league/oauth2-client": "^2.9"
+    },
+    "require-dev": {
+        "ext-sodium": "*",
+        "friendsofphp/php-cs-fixer": "^3.95.27",
+        "guzzlehttp/guzzle": "^7.9",
+        "phpstan/phpstan": "^2.3.1",
+        "phpstan/phpstan-deprecation-rules": "^2.0.5",
+        "phpunit/phpunit": "^13.4.3",
+        "psr/simple-cache": "^3.0",
+        "rector/rector": "^2.7",
+        "symfony/cache": "^8.0"
+    },
+    "suggest": {
+        "ext-sodium": "Required to verify ID tokens signed with EdDSA (Ed25519).",
+        "psr/simple-cache": "Lets TelegramProvider cache Telegram's signing keys (JWKS) through a PSR-16 cache via the `jwksCache` option."
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "autoload": {
+        "psr-4": {
+            "Oleksyuk\\OAuth2\\Client\\Provider\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Oleksyuk\\OAuth2\\Client\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
