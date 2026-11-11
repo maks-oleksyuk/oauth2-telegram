@@ -13,7 +13,7 @@
 </div>
 
 Targets the OpenID Connect flow at `https://oauth.telegram.org`, not the legacy Login Widget that signs the data with the bot token.
-Framework-agnostic: works with plain League, `knpuniversity/oauth2-client-bundle`, Laravel and anything else built on League.
+Framework-agnostic: works with plain League, `knpuniversity/oauth2-client-bundle` and anything else built on `league/oauth2-client`.
 
 ## Installation
 
@@ -31,9 +31,9 @@ composer require oleksyuk/oauth2-telegram
 ## Usage
 
 ```php
-use Oleksyuk\OAuth2\Client\Provider\TelegramProvider;
+use Oleksyuk\OAuth2\Client\Provider\Telegram;
 
-$provider = new TelegramProvider([
+$provider = new Telegram([
     'clientId' => '1234567890',
     'clientSecret' => 'your-client-secret',
     'redirectUri' => 'https://example.com/auth/telegram/callback',
@@ -80,6 +80,7 @@ Every getter except `getId()` returns `null` when the claim is missing.
 | `pkceMethod`   | `S256`           | PKCE method; `null` disables PKCE.                                                               |
 | `jwksCache`    | `null`           | A PSR-16 cache (`psr/simple-cache`) for Telegram's signing keys. Without it the keys are fetched on every login. |
 | `jwksCacheTtl` | `3600`           | Cache lifetime in seconds. On a signature failure with cached keys the set is refetched once (key rotation). |
+| `leeway`       | `60`             | Allowed clock skew in seconds for `exp`, `nbf` and `iat`. |
 
 ### Scopes
 
@@ -103,11 +104,16 @@ $url = $provider->getAuthorizationUrl(['lang' => 'uk']);
 
 ### Errors
 
-Every failure throws `League\OAuth2\Client\Provider\Exception\IdentityProviderException`: an error from the token
-endpoint (with Telegram's `error_description`/`error` as the message when present), a missing ID token, a wrong
-`iss`/`aud`/`sub`, an unusable JWKS and any signature or time check failure. In the last case the original
-`firebase/php-jwt` exception (`ExpiredException`, `SignatureInvalidException`, `BeforeValidException`, …) is
-available via `getPrevious()`.
+Every failure throws `Oleksyuk\OAuth2\Client\Exception\TelegramIdentityProviderException`, a subclass of
+League's `IdentityProviderException`:
+
+- a token endpoint error. Telegram answers these with **HTTP 200** and only an `error` field, e.g.
+  `{"error": "invalid_grant"}` for an expired, reused or unknown code. The message is the `error` value
+  (`error_description` if Telegram ever sends one, otherwise the HTTP reason phrase), and `getResponseBody()` holds the
+  parsed body;
+- a missing ID token, a wrong `iss`/`aud`/`sub` or an unusable JWKS;
+- a failed signature or time check. The original `firebase/php-jwt` exception (`ExpiredException`,
+  `SignatureInvalidException`, `BeforeValidException`, …) is available via `getPrevious()`.
 
 ## Symfony (`knpuniversity/oauth2-client-bundle`)
 
@@ -115,14 +121,14 @@ available via `getPrevious()`.
 // config/packages/knpu_oauth2_client.php
 namespace Symfony\Component\DependencyInjection\Loader\Configurator;
 
-use Oleksyuk\OAuth2\Client\Provider\TelegramProvider;
+use Oleksyuk\OAuth2\Client\Provider\Telegram;
 
 return App::config([
     'knpu_oauth2_client' => [
         'clients' => [
             'telegram' => [
                 'type' => 'generic',
-                'provider_class' => TelegramProvider::class,
+                'provider_class' => Telegram::class,
                 'client_id' => '%env(TELEGRAM_CLIENT_ID)%',
                 'client_secret' => '%env(TELEGRAM_CLIENT_SECRET)%',
                 'redirect_route' => 'auth_oauth_callback',
@@ -149,7 +155,7 @@ To keep PKCE on, store `$client->getOAuth2Provider()->getPkceCode()` in the sess
 Verified on every `getResourceOwner()` call:
 
 - the ID token signature against Telegram's JWKS (`https://oauth.telegram.org/.well-known/jwks.json`);
-- `exp`, `nbf` and `iat`;
+- `exp`, `nbf` and `iat`, with 60 seconds of clock skew allowed by default;
 - `iss` is `https://oauth.telegram.org`;
 - `aud` contains your client id;
 - `sub` is present.

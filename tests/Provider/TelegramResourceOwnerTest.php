@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Oleksyuk\OAuth2\Client\Tests;
+namespace Oleksyuk\OAuth2\Client\Tests\Provider;
 
 use Oleksyuk\OAuth2\Client\Provider\TelegramResourceOwner;
 use PHPUnit\Framework\Attributes\CoversClass;

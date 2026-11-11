@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Oleksyuk\OAuth2\Client\Tests;
+namespace Oleksyuk\OAuth2\Client\Tests\Provider;
 
+use Firebase\JWT\BeforeValidException;
 use Firebase\JWT\ExpiredException;
 use Firebase\JWT\JWT;
 use Firebase\JWT\SignatureInvalidException;
@@ -13,9 +14,9 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use League\OAuth2\Client\OptionProvider\PostAuthOptionProvider;
-use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Token\AccessToken;
-use Oleksyuk\OAuth2\Client\Provider\TelegramProvider;
+use Oleksyuk\OAuth2\Client\Exception\TelegramIdentityProviderException;
+use Oleksyuk\OAuth2\Client\Provider\Telegram;
 use Oleksyuk\OAuth2\Client\Provider\TelegramResourceOwner;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -28,9 +29,10 @@ use Symfony\Component\Cache\Psr16Cache;
 /**
  * @internal
  */
-#[CoversClass(TelegramProvider::class)]
+#[CoversClass(Telegram::class)]
+#[CoversClass(TelegramIdentityProviderException::class)]
 #[UsesClass(TelegramResourceOwner::class)]
-final class TelegramProviderTest extends TestCase
+final class TelegramTest extends TestCase
 {
     private const string CLIENT_ID = '123456';
 
@@ -55,7 +57,7 @@ final class TelegramProviderTest extends TestCase
 
         self::assertSame('777', $owner->getId());
         self::assertSame('maks', $owner->getUsername());
-        self::assertSame(TelegramProvider::ISSUER.'/.well-known/jwks.json', (string) $this->request(0)->getUri());
+        self::assertSame(Telegram::ISSUER.'/.well-known/jwks.json', (string) $this->request(0)->getUri());
     }
 
     /**
@@ -87,7 +89,7 @@ final class TelegramProviderTest extends TestCase
     {
         [$signingKey, $jwk] = $this->key('RS256');
 
-        $this->expectException(IdentityProviderException::class);
+        $this->expectException(TelegramIdentityProviderException::class);
         $this->expectExceptionMessageIsOrContains($message);
 
         $this->provider([$this->jwks($jwk)])->getResourceOwner($this->token($this->claims($claims), $signingKey));
@@ -131,6 +133,26 @@ final class TelegramProviderTest extends TestCase
         self::assertInstanceOf(ExpiredException::class, $exception->getPrevious());
     }
 
+    public function testToleratesClockSkewWithinLeeway(): void
+    {
+        [$signingKey, $jwk] = $this->key('RS256');
+
+        $owner = $this->provider([$this->jwks($jwk)])->getResourceOwner($this->token($this->claims(['iat' => time() + 30]), $signingKey));
+
+        self::assertSame('777', $owner->getId());
+        self::assertSame(0, JWT::$leeway);
+    }
+
+    public function testRejectsClockSkewBeyondLeeway(): void
+    {
+        [$signingKey, $jwk] = $this->key('RS256');
+
+        $exception = $this->catch(fn (): TelegramResourceOwner => $this->provider([$this->jwks($jwk)], ['leeway' => 10])->getResourceOwner($this->token($this->claims(['iat' => time() + 30]), $signingKey)));
+
+        self::assertInstanceOf(BeforeValidException::class, $exception->getPrevious());
+        self::assertSame(0, JWT::$leeway);
+    }
+
     public function testWrapsTokenSignedWithAnotherKey(): void
     {
         [, $jwk] = $this->key('RS256');
@@ -143,7 +165,7 @@ final class TelegramProviderTest extends TestCase
 
     public function testRejectsMissingIdToken(): void
     {
-        $this->expectException(IdentityProviderException::class);
+        $this->expectException(TelegramIdentityProviderException::class);
         $this->expectExceptionMessageIsOrContains('Telegram did not return an ID token.');
 
         $this->provider()->getResourceOwner(new AccessToken(['access_token' => 'x']));
@@ -153,7 +175,7 @@ final class TelegramProviderTest extends TestCase
     {
         [$signingKey] = $this->key('RS256');
 
-        $this->expectException(IdentityProviderException::class);
+        $this->expectException(TelegramIdentityProviderException::class);
         $this->expectExceptionMessageIsOrContains('Telegram returned an invalid JWKS.');
 
         $this->provider([new Response(200, ['Content-Type' => 'text/plain'], 'nope')])->getResourceOwner($this->token($this->claims(), $signingKey));
@@ -182,7 +204,7 @@ final class TelegramProviderTest extends TestCase
         $url = $provider->getAuthorizationUrl();
         parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
 
-        self::assertStringStartsWith(TelegramProvider::ISSUER.'/auth?', $url);
+        self::assertStringStartsWith(Telegram::ISSUER.'/auth?', $url);
         self::assertSame('openid', $query['scope']);
         self::assertSame('code', $query['response_type']);
         self::assertSame(self::CLIENT_ID, $query['client_id']);
@@ -217,7 +239,7 @@ final class TelegramProviderTest extends TestCase
 
         self::assertSame('jwt', $token->getValues()['id_token']);
         $request = $this->request(0);
-        self::assertSame(TelegramProvider::ISSUER.'/token', (string) $request->getUri());
+        self::assertSame(Telegram::ISSUER.'/token', (string) $request->getUri());
         self::assertSame('Basic '.base64_encode(self::CLIENT_ID.':secret'), $request->getHeaderLine('Authorization'));
         parse_str((string) $request->getBody(), $body);
         ksort($body);
@@ -227,7 +249,7 @@ final class TelegramProviderTest extends TestCase
     public function testUserSuppliedOptionProviderWins(): void
     {
         $http = new Client(['handler' => $this->handler([$this->json(['access_token' => 'at'])])]);
-        $provider = new TelegramProvider(
+        $provider = new Telegram(
             ['clientId' => self::CLIENT_ID, 'clientSecret' => 'secret', 'redirectUri' => self::REDIRECT_URI],
             ['httpClient' => $http, 'optionProvider' => new PostAuthOptionProvider()],
         );
@@ -238,7 +260,7 @@ final class TelegramProviderTest extends TestCase
         self::assertStringContainsString('client_secret=secret', (string) $this->request(0)->getBody());
     }
 
-    public function testTokenErrorUsesTelegramErrorBody(): void
+    public function testTokenErrorPrefersErrorDescription(): void
     {
         $exception = $this->catch(fn () => $this->provider([$this->json(['error' => 'invalid_grant', 'error_description' => 'Code expired'], 400)])->getAccessToken('authorization_code', ['code' => 'x']));
 
@@ -247,11 +269,14 @@ final class TelegramProviderTest extends TestCase
         self::assertSame(['error' => 'invalid_grant', 'error_description' => 'Code expired'], $exception->getResponseBody());
     }
 
-    public function testTokenErrorFallsBackToErrorCode(): void
+    public function testTokenErrorWithHttp200(): void
     {
-        $exception = $this->catch(fn () => $this->provider([$this->json(['error' => 'invalid_grant'], 400)])->getAccessToken('authorization_code', ['code' => 'x']));
+        // What oauth.telegram.org/token actually returns for an expired or unknown code.
+        $exception = $this->catch(fn () => $this->provider([$this->json(['error' => 'invalid_grant'])])->getAccessToken('authorization_code', ['code' => 'x']));
 
         self::assertSame('invalid_grant', $exception->getMessage());
+        self::assertSame(200, $exception->getCode());
+        self::assertSame(['error' => 'invalid_grant'], $exception->getResponseBody());
     }
 
     public function testTokenErrorFallsBackToReasonPhrase(): void
@@ -311,9 +336,9 @@ final class TelegramProviderTest extends TestCase
      * @param list<Response>       $responses
      * @param array<string, mixed> $options
      */
-    private function provider(array $responses = [], array $options = []): TelegramProvider
+    private function provider(array $responses = [], array $options = []): Telegram
     {
-        return new TelegramProvider(
+        return new Telegram(
             $options + ['clientId' => self::CLIENT_ID, 'clientSecret' => 'secret', 'redirectUri' => self::REDIRECT_URI],
             ['httpClient' => new Client(['handler' => $this->handler($responses)])],
         );
@@ -325,7 +350,7 @@ final class TelegramProviderTest extends TestCase
     private function handler(array $responses): HandlerStack
     {
         $stack = HandlerStack::create(new MockHandler($responses));
-        $history = $this->history; // same object; a local keeps the by-reference parameter off the typed property
+        $history = $this->history; // history() takes it by reference, which a typed property can't satisfy
         $stack->push(Middleware::history($history));
 
         return $stack;
@@ -340,15 +365,15 @@ final class TelegramProviderTest extends TestCase
         return $entry['request'];
     }
 
-    private function catch(callable $call): IdentityProviderException
+    private function catch(callable $call): TelegramIdentityProviderException
     {
         try {
             $call();
-        } catch (IdentityProviderException $identityProviderException) {
-            return $identityProviderException;
+        } catch (TelegramIdentityProviderException $telegramIdentityProviderException) {
+            return $telegramIdentityProviderException;
         }
 
-        self::fail('Expected '.IdentityProviderException::class);
+        self::fail('Expected '.TelegramIdentityProviderException::class);
     }
 
     /**
@@ -383,7 +408,7 @@ final class TelegramProviderTest extends TestCase
     private function claims(array $override = []): array
     {
         return $override + [
-            'iss' => TelegramProvider::ISSUER,
+            'iss' => Telegram::ISSUER,
             'aud' => self::CLIENT_ID,
             'sub' => '777',
             'preferred_username' => 'maks',

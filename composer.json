@@ -46,13 +46,13 @@
     },
     "suggest": {
         "ext-sodium": "Required to verify ID tokens signed with EdDSA (Ed25519).",
-        "psr/simple-cache": "Lets TelegramProvider cache Telegram's signing keys (JWKS) through a PSR-16 cache via the `jwksCache` option."
+        "psr/simple-cache": "Lets the Telegram provider cache Telegram's signing keys (JWKS) through a PSR-16 cache via the `jwksCache` option."
     },
     "minimum-stability": "stable",
     "prefer-stable": true,
     "autoload": {
         "psr-4": {
-            "Oleksyuk\\OAuth2\\Client\\Provider\\": "src/"
+            "Oleksyuk\\OAuth2\\Client\\": "src/"
         }
     },
     "autoload-dev": {

@@ -8,9 +8,8 @@ use Firebase\JWT\JWK;
 use Firebase\JWT\JWT;
 use League\OAuth2\Client\OptionProvider\HttpBasicAuthOptionProvider;
 use League\OAuth2\Client\Provider\AbstractProvider;
-use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Token\AccessToken;
-use League\OAuth2\Client\Tool\BearerAuthorizationTrait;
+use Oleksyuk\OAuth2\Client\Exception\TelegramIdentityProviderException;
 use Psr\Http\Message\ResponseInterface;
 use Psr\SimpleCache\CacheInterface;
 
@@ -20,16 +19,14 @@ use Psr\SimpleCache\CacheInterface;
  * Telegram has no UserInfo endpoint: the resource owner is the verified ID token itself.
  *
  * Extra options on top of League's: `algorithm` (ID token signing algorithm picked in @BotFather, default RS256),
- * `pkceMethod` (default S256, null disables PKCE), `jwksCache` (PSR-16 cache for Telegram's signing keys)
- * and `jwksCacheTtl` (seconds, default 3600).
+ * `pkceMethod` (default S256, null disables PKCE), `jwksCache` (PSR-16 cache for Telegram's signing keys),
+ * `jwksCacheTtl` (seconds, default 3600) and `leeway` (allowed clock skew in seconds, default 60).
  */
-class TelegramProvider extends AbstractProvider
+class Telegram extends AbstractProvider
 {
-    use BearerAuthorizationTrait;
-
     public const string ISSUER = 'https://oauth.telegram.org';
 
-    /** Signing algorithms Telegram offers in @BotFather, all verifiable by firebase/php-jwt. */
+    /** Signing algorithms Telegram offers in @BotFather. */
     public const array ALGORITHMS = ['RS256', 'ES256', 'ES256K', 'EdDSA'];
 
     private const string JWKS_CACHE_KEY = 'oauth2_telegram_jwks';
@@ -42,9 +39,13 @@ class TelegramProvider extends AbstractProvider
 
     protected int $jwksCacheTtl = 3600;
 
+    protected int $leeway = 60;
+
     /**
      * @param array<string, mixed> $options
      * @param array<string, mixed> $collaborators
+     *
+     * @throws \InvalidArgumentException
      */
     public function __construct(array $options = [], array $collaborators = [])
     {
@@ -71,11 +72,17 @@ class TelegramProvider extends AbstractProvider
         return self::ISSUER.'/token';
     }
 
+    /**
+     * @throws \LogicException
+     */
     public function getResourceOwnerDetailsUrl(AccessToken $token): string
     {
         throw new \LogicException('Telegram has no UserInfo endpoint, the ID token is the resource owner.');
     }
 
+    /**
+     * @throws TelegramIdentityProviderException
+     */
     public function getResourceOwner(AccessToken $token): TelegramResourceOwner
     {
         return $this->createResourceOwner($this->fetchResourceOwnerDetails($token), $token);
@@ -100,44 +107,43 @@ class TelegramProvider extends AbstractProvider
     }
 
     /**
-     * @param array<mixed>|string $data
+     * @param  array<mixed>|string  $data
+     *
+     * @throws TelegramIdentityProviderException
      */
     protected function checkResponse(ResponseInterface $response, $data): void
     {
-        if ($response->getStatusCode() < 400) {
-            return;
+        if ($response->getStatusCode() >= 400 || (\is_array($data) && isset($data['error']))) {
+            throw TelegramIdentityProviderException::fromResponse($response, $data);
         }
-
-        // Telegram doesn't document its error body; use the standard OAuth 2.0 fields when present.
-        $message = \is_array($data) ? ($data['error_description'] ?? $data['error'] ?? null) : null;
-
-        throw new IdentityProviderException(\is_string($message) && '' !== $message ? $message : $response->getReasonPhrase(), $response->getStatusCode(), $data);
     }
 
     /**
      * @return array<mixed>
+     *
+     * @throws TelegramIdentityProviderException
      */
     protected function fetchResourceOwnerDetails(AccessToken $token): array
     {
         $idToken = $token->getValues()['id_token'] ?? null;
         if (!\is_string($idToken) || '' === $idToken) {
-            throw new IdentityProviderException('Telegram did not return an ID token.', 0, '');
+            throw new TelegramIdentityProviderException('Telegram did not return an ID token.', 0, '');
         }
 
         $claims = $this->verify($idToken);
 
         if (self::ISSUER !== ($claims['iss'] ?? null)) {
-            throw new IdentityProviderException('Unexpected ID token issuer.', 0, $claims);
+            throw new TelegramIdentityProviderException('Unexpected ID token issuer.', 0, $claims);
         }
 
         $audiences = array_map(static fn (mixed $aud): string => \is_scalar($aud) ? (string) $aud : '', (array) ($claims['aud'] ?? []));
         if (!\in_array($this->clientId, $audiences, true)) {
-            throw new IdentityProviderException('ID token audience does not match the client id.', 0, $claims);
+            throw new TelegramIdentityProviderException('ID token audience does not match the client id.', 0, $claims);
         }
 
         $sub = $claims['sub'] ?? null;
         if ((!\is_string($sub) && !\is_int($sub)) || '' === $sub) {
-            throw new IdentityProviderException('ID token has no subject.', 0, $claims);
+            throw new TelegramIdentityProviderException('ID token has no subject.', 0, $claims);
         }
 
         return $claims;
@@ -153,6 +159,8 @@ class TelegramProvider extends AbstractProvider
 
     /**
      * @return array<mixed>
+     *
+     * @throws TelegramIdentityProviderException
      */
     private function verify(string $idToken): array
     {
@@ -160,7 +168,7 @@ class TelegramProvider extends AbstractProvider
         if (\is_array($cached)) {
             try {
                 return $this->decode($idToken, $cached);
-            } catch (IdentityProviderException) {
+            } catch (TelegramIdentityProviderException) {
                 // Telegram may have rotated its keys: retry once with a fresh set.
             }
         }
@@ -170,12 +178,14 @@ class TelegramProvider extends AbstractProvider
 
     /**
      * @return array<mixed>
+     *
+     * @throws TelegramIdentityProviderException
      */
     private function fetchJwks(): array
     {
         $jwks = $this->getParsedResponse($this->getRequest(self::METHOD_GET, self::ISSUER.'/.well-known/jwks.json'));
         if (!\is_array($jwks)) {
-            throw new IdentityProviderException('Telegram returned an invalid JWKS.', 0, $jwks);
+            throw new TelegramIdentityProviderException('Telegram returned an invalid JWKS.', 0, $jwks);
         }
 
         $this->jwksCache?->set(self::JWKS_CACHE_KEY, $jwks, $this->jwksCacheTtl);
@@ -184,22 +194,26 @@ class TelegramProvider extends AbstractProvider
     }
 
     /**
-     * Verifies the signature and exp/nbf/iat; php-jwt failures are rethrown as IdentityProviderException.
+     * Verifies the signature and exp/nbf/iat.
      *
-     * @param array<mixed> $jwks
+     * @param  array<mixed>  $jwks
      *
      * @return array<mixed>
+     *
+     * @throws TelegramIdentityProviderException
      */
     private function decode(string $idToken, array $jwks): array
     {
+        // php-jwt only has a global leeway: set it for this call and restore it.
+        $leeway = JWT::$leeway;
+        JWT::$leeway = $this->leeway;
+
         try {
             return (array) JWT::decode($idToken, JWK::parseKeySet($jwks, $this->algorithm));
         } catch (\Exception $exception) {
-            $invalidToken = new IdentityProviderException('Invalid ID token: '.$exception->getMessage(), 0, '');
-            // IdentityProviderException's constructor takes no $previous.
-            new \ReflectionProperty(\Exception::class, 'previous')->setValue($invalidToken, $exception);
-
-            throw $invalidToken;
+            throw TelegramIdentityProviderException::invalidIdToken($exception);
+        } finally {
+            JWT::$leeway = $leeway;
         }
     }
 }
